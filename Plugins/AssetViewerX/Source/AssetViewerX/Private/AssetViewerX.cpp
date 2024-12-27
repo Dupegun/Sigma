@@ -3,6 +3,8 @@
 #include "AssetViewerX.h"
 #include "AssetViewerXStyle.h"
 #include "AssetViewerXCommands.h"
+#include "AssetViewerXSettings.h"
+#include "AssetViewerXTemplateListCustomization.h"
 #include "LevelEditor.h"
 #include "SAssetViewerTab.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -33,8 +35,26 @@ void FAssetViewerXModule::StartupModule()
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FAssetViewerXModule::RegisterMenus));
 	
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(AssetViewerXTabName, FOnSpawnTab::CreateRaw(this, &FAssetViewerXModule::OnSpawnPluginTab))
-		.SetDisplayName(LOCTEXT("FAssetViewerXTabTitle", "AssetViewerX"))
+		.SetDisplayName(LOCTEXT("AssetViewerXTabTitle", "AssetViewerX"))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+#pragma region Property Type Registrations
+	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+
+	PropertyModule.RegisterCustomPropertyTypeLayout(
+	FAssetViewerXTemplateList::StaticStruct()->GetFName(),
+	FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAssetViewerXTemplateListCustomization::MakeInstance));
+
+	PropertyModule.RegisterCustomPropertyTypeLayout(
+	FAssetViewerXTemplate::StaticStruct()->GetFName(),
+	FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAssetViewerXTemplateCustomization::MakeInstance));
+	
+	PropertyModule.RegisterCustomPropertyTypeLayout(
+		FAssetViewerXElement::StaticStruct()->GetFName(),
+		FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAssetViewerXElementCustomization::MakeInstance));
+
+	PropertyModule.NotifyCustomizationModuleChanged();
+#pragma endregion
 }
 
 void FAssetViewerXModule::ShutdownModule()
@@ -51,6 +71,17 @@ void FAssetViewerXModule::ShutdownModule()
 	FAssetViewerXCommands::Unregister();
 
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(AssetViewerXTabName);
+
+	// Unregister detail customization
+	if (FModuleManager::Get().IsModuleLoaded("PropertyEditor"))
+	{
+		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
+		PropertyModule.UnregisterCustomPropertyTypeLayout(FAssetViewerXTemplateList::StaticStruct()->GetFName());
+		PropertyModule.UnregisterCustomPropertyTypeLayout(FAssetViewerXTemplate::StaticStruct()->GetFName());
+		PropertyModule.UnregisterCustomPropertyTypeLayout(FAssetViewerXElement::StaticStruct()->GetFName());
+
+		PropertyModule.NotifyCustomizationModuleChanged();
+	}
 }
 
 TSharedRef<SDockTab> FAssetViewerXModule::OnSpawnPluginTab(const FSpawnTabArgs& SpawnTabArgs)

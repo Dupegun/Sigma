@@ -44,7 +44,8 @@ public class AssetViewerX : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				"PropertyEditor"
+				"PropertyEditor",
+				"DeveloperSettings",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
