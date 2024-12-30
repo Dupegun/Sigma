@@ -4,6 +4,7 @@
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
 #include "IDetailChildrenBuilder.h"
+#include "IPropertyUtilities.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
@@ -171,14 +172,12 @@ void FAssetViewerXTemplateCustomization::CustomizeChildren(TSharedRef<IPropertyH
 {
     TSharedPtr<IPropertyHandle> ElementsHandle = PropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXTemplate, Elements));
     
-    uint32 NumEntries;
-    ElementsHandle->GetNumChildren(NumEntries);
+    TSharedRef<FAssetViewerXElementArrayBuilder> ArrayBuilder = MakeShared<FAssetViewerXElementArrayBuilder>(
+        ElementsHandle.ToSharedRef(),
+        ChildBuilder
+    );
 
-    for (uint32 i = 0; i < NumEntries; ++i)
-    {
-        TSharedPtr<IPropertyHandle> EntryHandle = ElementsHandle->GetChildHandle(i);
-        ChildBuilder.AddProperty(EntryHandle.ToSharedRef());
-    }
+    ChildBuilder.AddCustomBuilder(ArrayBuilder);
 }
 
 // Element Customization Implementation
@@ -191,6 +190,9 @@ void FAssetViewerXElementCustomization::CustomizeHeader(TSharedRef<IPropertyHand
 {
     TSharedPtr<IPropertyHandle> ObjectHandle = PropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXElement, Object));
     TSharedPtr<IPropertyHandle> EntriesHandle = PropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXElement, Entries));
+
+    ThisPropertyHandle = PropertyHandle.ToSharedPtr();
+    PropertyUtilities = CustomizationUtils.GetPropertyUtilities();
     
     HeaderRow
     .NameContent()
@@ -201,31 +203,175 @@ void FAssetViewerXElementCustomization::CustomizeHeader(TSharedRef<IPropertyHand
     [
         EntriesHandle->CreatePropertyValueWidget()
     ];
+
+    EntriesHandle->SetOnPropertyValueChanged(
+        FSimpleDelegate::CreateSP(this, &FAssetViewerXElementCustomization::OnEntriesChanged));
 }
 
 void FAssetViewerXElementCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> PropertyHandle, IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& CustomizationUtils)
 {
     TSharedPtr<IPropertyHandle> EntriesHandle = PropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXElement, Entries));
     
-    uint32 NumEntries;
-    EntriesHandle->GetNumChildren(NumEntries);
+    TSharedRef<FAssetViewerXEntriesArrayBuilder> ArrayBuilder = MakeShared<FAssetViewerXEntriesArrayBuilder>(
+        EntriesHandle.ToSharedRef(),
+        ChildBuilder
+    );
 
-    for (uint32 i = 0; i < NumEntries; ++i)
+    ChildBuilder.AddCustomBuilder(ArrayBuilder);
+    
+    // TSharedPtr<IPropertyHandle> EntriesHandle = PropertyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXElement, Entries));
+    //
+    // uint32 NumEntries;
+    // EntriesHandle->GetNumChildren(NumEntries);
+    //
+    // for (uint32 i = 0; i < NumEntries; ++i)
+    // {
+    //     TSharedPtr<IPropertyHandle> EntryHandle = EntriesHandle->GetChildHandle(i);
+    //     TSharedPtr<IPropertyHandle> NameHandle = EntryHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXEntry, Name));
+    //     TSharedPtr<IPropertyHandle> TypeHandle = EntryHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXEntry, Type));
+    //     
+    //     FDetailWidgetRow& Row = ChildBuilder.AddCustomRow(FText::FromString(FString::Printf(TEXT("Entry (%d)"), i)));
+    //     Row.NameContent()
+    //     [
+    //         TypeHandle->CreatePropertyValueWidget()
+    //     ]
+    //     .ValueContent()
+    //     [
+    //         NameHandle->CreatePropertyValueWidget()
+    //     ];
+    // }
+}
+
+void FAssetViewerXElementCustomization::OnEntriesChanged()
+{
+    if (PropertyUtilities)
     {
-        TSharedPtr<IPropertyHandle> EntryHandle = EntriesHandle->GetChildHandle(i);
-        TSharedPtr<IPropertyHandle> NameHandle = EntryHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXEntry, Name));
-        TSharedPtr<IPropertyHandle> TypeHandle = EntryHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXEntry, Type));
-        
-        FDetailWidgetRow& Row = ChildBuilder.AddCustomRow(FText::FromString(FString::Printf(TEXT("Entry (%d)"), i)));
-        Row.NameContent()
+        PropertyUtilities->RequestRefresh();
+    }
+}
+
+FAssetViewerXElementArrayBuilder::FAssetViewerXElementArrayBuilder(TSharedRef<IPropertyHandle> InArrayPropertyHandle, IDetailChildrenBuilder& InChildBuilder)
+    : FDetailArrayBuilder(InArrayPropertyHandle, false, true), // No drag/drop, allow buttons
+      ArrayPropertyHandle(InArrayPropertyHandle->AsArray()),
+      ChildBuilder(InChildBuilder)
+{
+    OnGenerateArrayElementWidget(FOnGenerateArrayElementWidget::CreateLambda(
+        [this](TSharedRef<IPropertyHandle> ElementHandle, int32 Index, IDetailChildrenBuilder& Builder)
+        {
+            //TODO ?
+        }));
+}
+
+void FAssetViewerXElementArrayBuilder::GenerateHeaderRowContent(FDetailWidgetRow& NodeRow)
+{
+    auto PropertyHandle = GetPropertyHandle();
+    TSharedPtr<SHorizontalBox> ContentHorizontalBox;
+    SAssignNew(ContentHorizontalBox, SHorizontalBox);
+
+    if constexpr (constexpr bool bShouldDisplayElementNum = true)
+    {
+        ContentHorizontalBox->AddSlot()
         [
-            TypeHandle->CreatePropertyValueWidget()
-        ]
-        .ValueContent()
-        [
-            NameHandle->CreatePropertyValueWidget()
+            PropertyHandle->CreatePropertyValueWidget()
         ];
     }
+
+    FUIAction CopyAction;
+    FUIAction PasteAction;
+    PropertyHandle->CreateDefaultPropertyCopyPasteActions(CopyAction, PasteAction);
+    
+    NodeRow
+    .CopyAction(CopyAction)
+    .PasteAction(PasteAction);
+}
+
+void FAssetViewerXElementArrayBuilder::GenerateChildContent(IDetailChildrenBuilder& ChildrenBuilder)
+{
+    uint32 NumChildren = 0;
+    ArrayPropertyHandle->GetNumElements(NumChildren);
+
+    for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
+    {
+        TSharedRef<IPropertyHandle> ArrayElementPropertyHandle = ArrayPropertyHandle->GetElement(ChildIndex);
+
+        CustomizeArrayElementWidget(ArrayElementPropertyHandle, ChildrenBuilder);
+    }
+    
+    FDetailArrayBuilder::GenerateChildContent(ChildrenBuilder);
+}
+
+void FAssetViewerXElementArrayBuilder::CustomizeArrayElementWidget(TSharedRef<IPropertyHandle> Property, IDetailChildrenBuilder& ChildrenBuilder)
+{
+    IDetailPropertyRow& PropertyRow = ChildrenBuilder.AddProperty(Property);
+}
+
+FAssetViewerXEntriesArrayBuilder::FAssetViewerXEntriesArrayBuilder(TSharedRef<IPropertyHandle> InArrayPropertyHandle, IDetailChildrenBuilder& InChildBuilder)
+    : FDetailArrayBuilder(InArrayPropertyHandle, false, true), // No drag/drop, allow buttons
+      ArrayPropertyHandle(InArrayPropertyHandle->AsArray()),
+      ChildBuilder(InChildBuilder)
+{
+    OnGenerateArrayElementWidget(FOnGenerateArrayElementWidget::CreateLambda(
+    [this](TSharedRef<IPropertyHandle> ElementHandle, int32 Index, IDetailChildrenBuilder& Builder)
+    {
+        //TODO ?
+    }));
+}
+
+void FAssetViewerXEntriesArrayBuilder::GenerateHeaderRowContent(FDetailWidgetRow& NodeRow)
+{
+    auto PropertyHandle = GetPropertyHandle();
+    TSharedPtr<SHorizontalBox> ContentHorizontalBox;
+    SAssignNew(ContentHorizontalBox, SHorizontalBox);
+
+    if constexpr (constexpr bool bShouldDisplayElementNum = true)
+    {
+        ContentHorizontalBox->AddSlot()
+        [
+            PropertyHandle->CreatePropertyValueWidget()
+        ];
+    }
+
+    FUIAction CopyAction;
+    FUIAction PasteAction;
+    PropertyHandle->CreateDefaultPropertyCopyPasteActions(CopyAction, PasteAction);
+    
+    NodeRow
+    .CopyAction(CopyAction)
+    .PasteAction(PasteAction);
+}
+
+void FAssetViewerXEntriesArrayBuilder::GenerateChildContent(IDetailChildrenBuilder& ChildrenBuilder)
+{
+    uint32 NumChildren = 0;
+    ArrayPropertyHandle->GetNumElements(NumChildren);
+
+    for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
+    {
+        TSharedRef<IPropertyHandle> ArrayEntryPropertyHandle = ArrayPropertyHandle->GetElement(ChildIndex);
+
+        CustomizeArrayEntryWidget(ArrayEntryPropertyHandle, ChildrenBuilder);
+    }
+    
+    FDetailArrayBuilder::GenerateChildContent(ChildrenBuilder);
+}
+
+void FAssetViewerXEntriesArrayBuilder::CustomizeArrayEntryWidget(TSharedRef<IPropertyHandle> Property, IDetailChildrenBuilder& ChildrenBuilder)
+{
+    //IDetailPropertyRow& PropertyRow = ChildrenBuilder.AddProperty(Property);
+    
+    TSharedPtr<IPropertyHandle> NameHandle = Property->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXEntry, Name));
+    TSharedPtr<IPropertyHandle> TypeHandle = Property->GetChildHandle(GET_MEMBER_NAME_CHECKED(FAssetViewerXEntry, Type));
+
+    IDetailPropertyRow& PropertyRow = ChildrenBuilder.AddProperty(Property);
+    PropertyRow.CustomWidget()
+    .NameContent()
+    [
+        TypeHandle->CreatePropertyValueWidget()
+    ]
+    .ValueContent()
+    [
+        NameHandle->CreatePropertyValueWidget()
+    ];
 }
 
 #undef LOCTEXT_NAMESPACE
